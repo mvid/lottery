@@ -1,17 +1,23 @@
 pragma solidity ^0.4.24;
 
 contract Lottery {
-    bytes32 public sentinelHash;
+    uint256 public sentinelHash;
     uint256 public sentinelNumber;
 
-    mapping (address => bytes32) hashByAddress;
+
+    mapping (address => uint256) hashByAddress;
+    address[] public initialPlayers;
     uint256[] public numbers;
     address[] public verifiedPlayers;
 
     address public owner;
     bool looping = true;
-    enum LotteryState { Creating, Ready, Accept, Verify, Lock}
-    LotteryState state;
+    enum LotteryType { SingleRound, Accumulating }
+    LotteryType public lotteryType;
+    enum LotteryState { Creating, Ready, Accept, Verify, Lock }
+    LotteryState public state;
+
+    event LotteryResult(address winner, uint256 number);
 
     modifier restricted() {
         if (msg.sender == owner) _;
@@ -22,7 +28,7 @@ contract Lottery {
         state = LotteryState.Creating;
     }
 
-    function presentHash(bytes32 x) public payable {
+    function presentHash(uint256 x) public payable {
         require(state == LotteryState.Accept);
         require(msg.value > .001 ether);
         hashByAddress[msg.sender] = x;
@@ -30,7 +36,7 @@ contract Lottery {
 
     function verifyNumber(uint256 number) public {
         require(state == LotteryState.Verify);
-        require(keccak256(abi.encodePacked(number, msg.sender)) == hashByAddress[msg.sender]);
+        require(uint256(keccak256(abi.encodePacked(number, msg.sender))) == hashByAddress[msg.sender]);
         verifiedPlayers.push(msg.sender);
         numbers.push(number);
     }
@@ -49,7 +55,7 @@ contract Lottery {
         for (uint8 i = 0; i < numbers.length; ++i) {
             randomNumber += numbers[i];
         }
-        return randomNumber;
+        return uint256(keccak256(abi.encodePacked(randomNumber)));
     }
 
     function restart() private {
@@ -58,6 +64,10 @@ contract Lottery {
             delete sentinelHash;
             delete numbers;
             delete verifiedPlayers;
+            for (uint8 i = 0; i < initialPlayers.length; i++) {
+                delete hashByAddress[initialPlayers[i]];
+            }
+            delete initialPlayers;
 
             state = LotteryState.Ready;
         } else {
@@ -66,11 +76,11 @@ contract Lottery {
     }
 
     // Sentinel commands
-    function genHash(uint256 n) public view returns (bytes32) {
-        return keccak256(abi.encodePacked(n, msg.sender));
+    function genHash(uint256 n) public view returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(n, msg.sender)));
     }
 
-    function startAccepting(bytes32 x) restricted public {
+    function startAccepting(uint256 x) restricted public {
         require(state == LotteryState.Ready);
         sentinelHash = x;
         state = LotteryState.Accept;
@@ -78,7 +88,7 @@ contract Lottery {
 
     function endVerification(uint256 number) restricted public {
         require(state == LotteryState.Verify);
-        require(keccak256(abi.encodePacked(number, msg.sender)) == sentinelHash);
+        require(uint256(keccak256(abi.encodePacked(number, msg.sender))) == sentinelHash);
         state = LotteryState.Lock;
         sentinelNumber = number;
         determineWinner();
@@ -95,8 +105,13 @@ contract Lottery {
         state = LotteryState.Verify;
     }
 
-    function loop(bool x) restricted public {
+    function setLoop(bool x) restricted public {
         looping = x;
+    }
+
+    function setType(LotteryType t) restricted public {
+        require(state == LotteryState.Creating);
+        lotteryType = t;
     }
 
     function end() restricted public {
